@@ -1,0 +1,4 @@
+/home/santosh/Programs/CLion-2019.3.5/clion-2019.3.5/bin/cmake/linux/bin/cmake -DCMAKE_BUILD_TYPE=Debug -G "CodeBlocks - Unix Makefiles" /home/santosh/Projects/LearningVisualOdometry
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/santosh/Projects/LearningVisualOdometry/cmake-build-debug
