@@ -1,1 +1,0 @@
-/usr/bin/c++  -g   CMakeFiles/LearningVisualOdometry.dir/main.cpp.o  -o LearningVisualOdometry 
