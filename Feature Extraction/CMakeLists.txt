@@ -7,3 +7,7 @@ FIND_PACKAGE(OpenCV REQUIRED)
 
 add_executable(FastFeature FastFeature.cpp)
 TARGET_LINK_LIBRARIES (FastFeature  ${OpenCV_LIBS} )
+
+
+add_executable(OpticalFlow OpticalFlow.cpp)
+TARGET_LINK_LIBRARIES (OpticalFlow  ${OpenCV_LIBS} )
