@@ -26,6 +26,71 @@ using namespace Eigen;
 vector<Eigen::Matrix<double, 3, 1>> trajectory;
 
 
+
+class Extractor {
+
+public:
+    Ptr<Feature2D> orb = ORB::create(500);
+    Ptr<DescriptorMatcher> matcher = DescriptorMatcher::create("BruteForce-Hamming");
+    Mat last_descriptor ;
+    std::vector<KeyPoint> last_keypoints;
+
+    void extract(Mat &img , vector< Point2f> &src_points ,  vector< Point2f> &dst_points , bool &status){
+        std::vector<KeyPoint> keypoints;
+
+        status = false;
+
+        Mat descriptors;
+        std::vector< std::vector<DMatch> > matches;
+
+        orb->detectAndCompute(img, Mat(), keypoints, descriptors);
+        vector< Point2f> src_points1 , dst_points1;
+        if(!last_descriptor.empty()){
+
+            matcher->knnMatch( descriptors, last_descriptor, matches, 2 );
+
+            const float ratio_thresh = 0.5f;
+
+            for (size_t i = 0; i < matches.size(); i++)
+            {
+                if (matches[i][0].distance < ratio_thresh * matches[i][1].distance)
+                {
+                    src_points1.push_back(keypoints[matches[i][0].queryIdx].pt);
+                    dst_points1.push_back(last_keypoints[matches[i][0].trainIdx].pt);
+                }
+            }
+
+            cout<<src_points1.size()<<endl;
+            Mat F , mask;
+            F = findFundamentalMat(dst_points1, src_points1,RANSAC, 0.3/460, 0.99, mask);
+
+            SVD decomp = SVD(F);
+
+            cout<<decomp.w<<endl;
+
+
+            for (int j = 0; j < mask.rows; ++j) {
+                if(mask.at<double>(j,0) != 0){
+                    src_points.push_back(src_points1.at(j));
+                    dst_points.push_back(dst_points1.at(j));
+                }
+            }
+            cout<<src_points.size()<<endl;
+            status = true;
+
+        }
+        last_descriptor = descriptors;
+        last_keypoints =  keypoints;
+    }
+
+
+
+
+};
+
+
+
+
 void featureDetection(const Mat &img_1, vector<Point2f> &points) {
     goodFeaturesToTrack(img_1, points, 500, 0.09, 7, Mat(), 7, 3, 0, 0.04);
 }
@@ -140,98 +205,94 @@ int main(int argc, char **argv) {
 
     thread t1(DrawTrajectory);
 
-    cv::Mat current_frame, current_frameGrey, previous_frame, previous_frameGrey;
+    cv::Mat current_frame, current_frameGrey;
+
     Matrix3d R_f;
     Vector3d t_f;
-    vector<Point2f> points1, points2;
+
+
     trajectory.push_back((Eigen::Matrix<double, 3, 1>(0, 0, 0)));
 
-    double focal = 1;
     cv::Point2d pp(0, 0);
 
     Mat E, R, t, mask;
 
 
-    cv::VideoCapture cap(2);
+    VideoCapture cap("../files/test.mp4");
+
+
+    // Check if camera opened successfully
+    if(!cap.isOpened()){
+        cout << "Error opening video stream or file" << endl;
+        return -1;
+    }
+
+
+//    cv::VideoCapture cap(2);
+
+    Extractor extractor1;
 
     cout << "Initializing" << endl;
 
     while (1) {
-        cap >> previous_frame;
-        cvtColor(previous_frame, previous_frameGrey, COLOR_BGR2GRAY);
+        vector<Point2f> points1, points2;
 
-        this_thread::sleep_until(chrono::system_clock::now() + chrono::seconds(1));
+        bool status;
 
         cap >> current_frame;
         cvtColor(current_frame, current_frameGrey, COLOR_BGR2GRAY);
 
+        extractor1.extract(current_frameGrey  , points1 ,points2,status);
 
-        featureDetection(previous_frameGrey, points1);
+        if(status){
+            E = findFundamentalMat(points2, points1,RANSAC, 0.3/460, 0.99, mask);
 
-        vector<uchar> status;
-        featureTracking(previous_frame, current_frame, points1, points2, status);
+            cv::Mat rot, trans;
 
-        E = findFundamentalMat(points2, points1,RANSAC, 0.3/460, 0.99, mask);
+            cv::Mat cameraMatrix = (cv::Mat_<double>(3, 3) << 200, 0,320, 0, 200, 240, 0, 0, 1);
 
-        cout<<"Essentaial : "<< E<<endl;
+            recoverPose(E, points2, points1,cameraMatrix, rot, trans,mask);
 
+            Eigen::Matrix3d R_d;
+            Eigen::Vector3d T;
+            for (int i = 0; i < 3; i++) {
+                T(i) = trans.at<double>(i, 0);
+                for (int j = 0; j < 3; j++)
+                    R_d(i, j) = rot.at<double>(i, j);
+            }
 
-        cv::Mat rot, trans;
-
-        cv::Mat cameraMatrix = (cv::Mat_<double>(3, 3) << 844.46113182, 0, 356.18030027, 0, 881.57023676, 208.94028916, 0, 0, 1);
-
-        int inlier_cnt = recoverPose(E, points2, points1,cameraMatrix, rot, trans,mask);
-
-        cout<<inlier_cnt<<endl;
-
-        Eigen::Matrix3d R_d;
-        Eigen::Vector3d T;
-        for (int i = 0; i < 3; i++) {
-            T(i) = trans.at<double>(i, 0);
-            for (int j = 0; j < 3; j++)
-                R_d(i, j) = rot.at<double>(i, j);
-        }
-
-        R_f = R_d.transpose();
-        t_f =  T;
+            R_f = R_d.transpose();
+            t_f =  T;
 
 
-
-        for (int i = 0; i < points1.size(); i++) {
-            circle(current_frame, points1[i], 5, Scalar(0), 2, 8, 0);
-        }
-        imshow("Feature Window", current_frame);
-        waitKey(1);
-
-        if(inlier_cnt > 5)
             break   ;
+        }
+
+
+
+
     }
 
     trajectory.emplace_back(t_f);
 
-    previous_frame = current_frame.clone();
-    points1 = points2;
-    points2.clear();
-
     while (true) {
 
-        cap >> current_frame;
+        vector<Point2f> points1, points2;
 
+        bool status;
+
+        cap >> current_frame;
         cvtColor(current_frame, current_frameGrey, COLOR_BGR2GRAY);
 
-        vector<uchar> status;
-
-        cout<<"Size :"<<points1.size() <<endl;
-        featureTracking(previous_frame, current_frame, points1, points2, status);
+        extractor1.extract(current_frameGrey  , points1 ,points2,status);
 
         cv::Mat cameraMatrix = (cv::Mat_<double>(3, 3) << 844.46113182, 0, 356.18030027, 0, 881.57023676, 208.94028916, 0, 0, 1);
 
         E = findFundamentalMat(points2, points1,RANSAC, 0.3/460, 0.999, mask);
-        cout<<"Essentaial : "<< E<<endl;
 
         if (!E.empty() && E.cols == 3 && E.rows == 3) {
 
-            int inlier_cnt = recoverPose(E, points2, points1,cameraMatrix, R, t,mask);
+            recoverPose(E, points2, points1,cameraMatrix, R, t,mask);
 
             Eigen::Matrix3d R_d;
             Eigen::Vector3d T;
@@ -254,17 +315,14 @@ int main(int argc, char **argv) {
                 trajectory.emplace_back(T);
 
 
+            for( size_t i = 0; i < points1.size(); i++ )
+            {
+                cv::circle( current_frame, Point2f(int(points1[i].x),int(points1[i].y)), 1, Scalar(0,0,255), 3, 8, 0 );
+                cv::circle( current_frame, Point2f(int(points2[i].x),int(points2[i].y)), 1, Scalar(0,255,0), 3, 8, 0 );
 
-
-
-            previous_frame = current_frame.clone();
-//            points1 = points2;
-//            points2.clear();
-
-
-            for (int i = 0; i < points1.size(); i++) {
-                circle(current_frame, points1[i], 5, Scalar(0), 2, 8, 0);
+                cv::line(current_frame,Point2f(int(points1[i].x),int(points1[i].y)),Point2f(int(points2[i].x),int(points2[i].y)),Scalar(255,0,0),2);
             }
+
         }
         imshow("Feature Window", current_frame);
         waitKey(1);
